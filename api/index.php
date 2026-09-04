@@ -360,13 +360,14 @@ if(routeMatch('/ekskul/:id/anggota',$uri,$pm) && $method==='GET'){
   $isMember=false;
   try{ $chk=pdo()->prepare("SELECT 1 FROM registrations WHERE ekskul_id=? AND user_id=? AND deleted_at IS NULL AND status IN ('diterima','menunggu')"); $chk->execute([$eid,$u['id']]); $isMember=(bool)$chk->fetch(); }catch(Exception $e){}
   if(!isPembinaOf($eid) && $u['role']!=='admin' && !$isMember && $u['role']!=='kepsek') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota/pembina ekskul ini']],403);
+  $limit = isset($_GET['limit']) ? min(100,max(1,(int)$_GET['limit'])) : 100;
+  $off = 0; // compact list, no pagination needed for now
   // is_online via last_seen > 3 menit
-  $st=pdo()->prepare("SELECT r.*, u.nama, u.email, u.last_seen, CASE WHEN u.last_seen IS NOT NULL AND u.last_seen >= DATE_SUB(NOW(), INTERVAL 3 MINUTE) THEN 1 ELSE 0 END AS is_online FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.ekskul_id=? AND r.deleted_at IS NULL ORDER BY is_online DESC, r.created_at DESC"); 
-  // sqlite compat: if db_type sqlite fallback to datetime('now','-3 minutes')
+  $qMysql="SELECT r.*, u.nama, u.email, u.last_seen, CASE WHEN u.last_seen IS NOT NULL AND u.last_seen >= DATE_SUB(NOW(), INTERVAL 3 MINUTE) THEN 1 ELSE 0 END AS is_online FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.ekskul_id=? AND r.deleted_at IS NULL ORDER BY is_online DESC, r.created_at DESC LIMIT $limit";
+  $qSqlite="SELECT r.*, u.nama, u.email, u.last_seen, CASE WHEN u.last_seen IS NOT NULL AND u.last_seen >= datetime('now','-3 minutes') THEN 1 ELSE 0 END AS is_online FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.ekskul_id=? AND r.deleted_at IS NULL ORDER BY is_online DESC, r.created_at DESC LIMIT $limit";
   $c=$GLOBALS['config']??require __DIR__.'/config.php';
-  if(($c['db_type']??'mysql')==='sqlite'){
-    $st=pdo()->prepare("SELECT r.*, u.nama, u.email, u.last_seen, CASE WHEN u.last_seen IS NOT NULL AND u.last_seen >= datetime('now','-3 minutes') THEN 1 ELSE 0 END AS is_online FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.ekskul_id=? AND r.deleted_at IS NULL ORDER BY is_online DESC, r.created_at DESC");
-  }
+  if(($c['db_type']??'mysql')==='sqlite') $st=pdo()->prepare($qSqlite);
+  else $st=pdo()->prepare($qMysql);
   $st->execute([$eid]);
   $rows=$st->fetchAll();
   $etag='"'.md5(json_encode($rows).$eid).'"'; header('ETag: '.$etag); header('Cache-Control: private, max-age=30, stale-while-revalidate=60');
@@ -984,8 +985,8 @@ if(routeMatch('/ekskul/:id/pengumuman',$uri,$pm) && $method==='GET'){
   } else if($cu['role']==='pembina'){
     if($erow['status']!=='approved' && (int)$erow['pembina_id'] !== (int)$cu['id']) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Bukan pembina ekskul ini']],403);
   }
-  $st=pdo()->prepare('SELECT p.*, u.nama creator_nama FROM ekskul_pengumuman p LEFT JOIN users u ON u.id=p.created_by WHERE p.ekskul_id=? ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT 50'); $st->execute([$eid]); $rows=$st->fetchAll();
-  foreach($rows as &$r){ $r['isi']=e($r['isi']); $r['creator_nama']=$r['creator_nama']?e($r['creator_nama']):null; } unset($r);
+  $st=pdo()->prepare('SELECT p.*, u.nama creator_nama, u.role creator_role FROM ekskul_pengumuman p LEFT JOIN users u ON u.id=p.created_by WHERE p.ekskul_id=? ORDER BY p.is_pinned DESC, p.created_at DESC LIMIT 50'); $st->execute([$eid]); $rows=$st->fetchAll();
+  foreach($rows as &$r){ $r['isi']=e($r['isi']); $r['creator_nama']=$r['creator_nama']?e($r['creator_nama']):null; $r['creator_role']=$r['creator_role']??null; } unset($r);
   $etag='"'.md5(json_encode($rows).$eid).'"';
   header('ETag: '.$etag); header('Cache-Control: public, max-age=30, stale-while-revalidate=60');
   if(isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH'])===$etag){ http_response_code(304); exit; }
@@ -1006,8 +1007,8 @@ if(routeMatch('/ekskul/:id/pengumuman',$uri,$pm) && $method==='POST'){
   @file_put_contents($f, json_encode(['count'=>$cnt+1,'start'=>$win]));
   pdo()->prepare('INSERT INTO ekskul_pengumuman(ekskul_id,isi,is_pinned,created_by) VALUES (?,?,?,?)')->execute([$eid,$isi,$isPinned,currentUser()['id']]);
   $id=pdo()->lastInsertId();
-  $row=pdo()->prepare('SELECT p.*, u.nama creator_nama FROM ekskul_pengumuman p LEFT JOIN users u ON u.id=p.created_by WHERE p.id=?'); $row->execute([$id]); $r=$row->fetch();
-  $r['isi']=e($r['isi']); $r['creator_nama']=$r['creator_nama']?e($r['creator_nama']):null;
+  $row=pdo()->prepare('SELECT p.*, u.nama creator_nama, u.role creator_role FROM ekskul_pengumuman p LEFT JOIN users u ON u.id=p.created_by WHERE p.id=?'); $row->execute([$id]); $r=$row->fetch();
+  $r['isi']=e($r['isi']); $r['creator_nama']=$r['creator_nama']?e($r['creator_nama']):null; $r['creator_role']=$r['creator_role']??null;
   jsonOut(['success'=>true,'data'=>$r],201);
 }
 if(routeMatch('/ekskul/:id/pengumuman/:pid',$uri,$pm) && $method==='DELETE'){
