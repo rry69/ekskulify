@@ -360,7 +360,7 @@ if(routeMatch('/ekskul/:id/anggota',$uri,$pm) && $method==='GET'){
   $isMember=false;
   try{ $chk=pdo()->prepare("SELECT 1 FROM registrations WHERE ekskul_id=? AND user_id=? AND deleted_at IS NULL AND status IN ('diterima','menunggu')"); $chk->execute([$eid,$u['id']]); $isMember=(bool)$chk->fetch(); }catch(Exception $e){}
   if(!isPembinaOf($eid) && $u['role']!=='admin' && !$isMember && $u['role']!=='kepsek') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota/pembina ekskul ini']],403);
-  $limit = isset($_GET['limit']) ? min(100,max(1,(int)$_GET['limit'])) : 100;
+  $limit = isset($_GET['limit']) && $_GET['limit']!=='' ? min(100,max(1,(int)$_GET['limit'])) : 100;
   $off = 0; // compact list, no pagination needed for now
   // is_online via last_seen > 3 menit
   $qMysql="SELECT r.*, u.nama, u.email, u.last_seen, CASE WHEN u.last_seen IS NOT NULL AND u.last_seen >= DATE_SUB(NOW(), INTERVAL 3 MINUTE) THEN 1 ELSE 0 END AS is_online FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.ekskul_id=? AND r.deleted_at IS NULL ORDER BY is_online DESC, r.created_at DESC LIMIT $limit";

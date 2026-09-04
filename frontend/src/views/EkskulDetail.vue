@@ -558,6 +558,8 @@ async function load(){
       }
     }
     startPresence()
+    // auto-load Rekap Saya for anggota (non-pembina) so it shows immediately after 4-fast load
+    if(isAnggota.value && !isPembina.value) fetchMyRekapIfEmpty().catch(()=>{})
   } finally { loading.value=false }
 }
 async function fetchPosts(tipe='diskusi', page=1, append=false){
