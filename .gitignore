@@ -41,6 +41,9 @@ api/.env
 .app_key
 api/.app_key
 
+# Local-only notes (tidak ikut repo publik)
+MEMORY.md
+
 # Runtime artifacts
 api/logs/
 api/uploads/
