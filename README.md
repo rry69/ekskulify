@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/rry69/ekskulify/pulls)
 
-**Repo:** [github.com/rry69/ekskulify](https://github.com/rry69/ekskulify)
+**Demo:** [ekskulify.hrry.win](https://ekskulify.hrry.win) · **Repo:** [github.com/rry69/ekskulify](https://github.com/rry69/ekskulify)
 
 </div>
 
