@@ -1,21 +1,40 @@
-MIT License
+HAK CIPTA © 2026 Harry Prasetyo. Seluruh hak dilindungi undang-undang.
 
-Copyright (c) 2026 Harry Prasetyo
+LISENSI SUMBER TERBUKA TERBATAS — EKSKULIFY
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. IZIN NON-KOMERSIAL
+Pemegang salinan Perangkat Lunak ini diizinkan untuk:
+- melihat, mempelajari, dan mengunduh kode sumber;
+- menggunakan untuk keperluan pribadi, pendidikan, dan evaluasi non-komersial;
+- membuat turunan untuk pembelajaran, selama tidak disebarluaskan
+  untuk tujuan komersial.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. LARANGAN
+Tanpa lisensi komersial tertulis dari pemegang hak cipta, DILARANG:
+- memasang atau mengoperasikan Perangkat Lunak pada sekolah, instansi,
+  perusahaan, atau organisasi mana pun;
+- menggunakan Perangkat Lunak untuk kegiatan yang menghasilkan
+  pendapatan, langsung maupun tidak langsung;
+- mendistribusikan ulang, menjual, menyewakan, atau mengalihkan
+  Perangkat Lunak atau turunannya kepada pihak ketiga;
+- menghapus atau mengubah pemberitahuan hak cipta ini.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+3. LISENSI KOMERSIAL / INSTANSI
+Penggunaan pada sekolah atau instansi resmi, instalasi produksi,
+penyesuaian fitur, dan pendampingan teknis tersedia melalui lisensi
+komersial tertulis. Hubungi pemegang hak cipta melalui repositori ini
+untuk penawaran lisensi.
+
+4. MASA TRANSISI
+Versi yang didistribusikan di bawah Lisensi MIT sebelum 16 September 2026
+(hingga commit be56dbb) tetap tunduk pada Lisensi MIT untuk salinan
+tersebut. Seluruh versi sesudahnya tunduk pada Lisensi ini.
+
+5. TANPA JAMINAN
+PERANGKAT LUNAK DIBERIKAN "SEBAGAIMANA ADANYA", TANPA JAMINAN APAPUN,
+TERSURAT MAUPUN TERSIRAT, TERMASUK NAMUN TIDAK TERBATAS PADA JAMINAN
+KELAYAKAN JUAL, KESESUAIAN UNTUK TUJUAN TERTENTU, DAN NON-PELANGGARAN.
+DALAM KEADAAN APAPUN PEMEGANG HAK CIPTA TIDAK BERTANGGUNG JAWAB ATAS
+KLAIM, KERUGIAN, ATAU TANGGUNG JAWAB APAPUN, BAIK DALAM TINDAKAN
+KONTRAK, KESALAHAN, ATAU LAINNYA, YANG TIMBUL DARI, AKIBAT, ATAU TERKAIT
+DENGAN PERANGKAT LUNAK ATAU PENGGUNAAN PERANGKAT LUNAK.

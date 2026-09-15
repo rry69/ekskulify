@@ -7,7 +7,7 @@
 [![Vue](https://img.shields.io/badge/Vue-3.4-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org)
 [![PHP](https://img.shields.io/badge/PHP-8.3-777BB4?logo=php&logoColor=white)](https://www.php.net)
 [![MySQL](https://img.shields.io/badge/MySQL-8-4479A1?logo=mysql&logoColor=white)](https://www.mysql.com)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-NonCommercial-red.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/rry69/ekskulify/pulls)
 
 **Demo:** [ekskulify.hrry.win](https://ekskulify.hrry.win) · **Repo:** [github.com/rry69/ekskulify](https://github.com/rry69/ekskulify)
@@ -374,8 +374,9 @@ sebelum membuka PR.
 
 ## Lisensi
 
-Didistribusikan di bawah Lisensi MIT. Lihat [LICENSE](LICENSE) untuk
-informasi selengkapnya.
+Source-terbuka untuk pembelajaran dan evaluasi non-komersial.
+Penggunaan pada sekolah atau instansi memerlukan lisensi komersial
+tertulis. Lihat [LICENSE](LICENSE) untuk informasi selengkapnya.
 
 ---
 
