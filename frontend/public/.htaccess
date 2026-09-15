@@ -1,0 +1,79 @@
+RewriteEngine On
+
+# ============================================================
+# [ HTTPS redirect + HSTS ] — OPT-IN & DEFAULT MATI
+# Aktivasi: pastikan SSL aktif, lalu SetEnv APP_FORCE_HTTPS 1
+# di vhost/panel hosting. Selama tidak diset → DIAM (aman).
+# Blok ini diletakkan SEBELUM fallback SPA agar semua request
+# (termasuk route SPA & file aset) ikut diredirect ke HTTPS.
+# ============================================================
+<IfModule mod_rewrite.c>
+    # redirect HTTP -> HTTPS (hormati X-Forwarded-Proto dari proxy/CDN)
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteCond %{ENV:APP_FORCE_HTTPS} =1
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+    # penanda HSTS: hanya diset saat koneksi benar-benar HTTPS
+    RewriteCond %{HTTPS} on
+    RewriteRule .* - [E=APACHE_HSTS:1]
+</IfModule>
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+# shared-hosting public_html: /api/* milik backend PHP, bukan fallback SPA
+RewriteCond %{REQUEST_URI} !^/api(/|$)
+RewriteRule ^ index.html [L]
+
+# ===== SPA: no-cache index.html (wajib revalidate setiap kunjungan) =====
+<FilesMatch "^index\.html$">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+  Header set Pragma "no-cache"
+  Header set Expires "0"
+</FilesMatch>
+
+# ===== Assets statis: immutable (hash-named Vite) =====
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.(png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|otf)$">
+    Header set Cache-Control "public, max-age=31536000"
+  </FilesMatch>
+</IfModule>
+
+# ===== Assets: Expires header (1 tahun) =====
+<IfModule mod_expires.c>
+  ExpiresActive On
+  <FilesMatch "\.(js|css|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|otf)$">
+    ExpiresDefault "access plus 1 year"
+  </FilesMatch>
+</IfModule>
+
+# ===== Mod deflate (gzip) =====
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript image/svg+xml
+</IfModule>
+
+# ===== Security headers =====
+Header set X-Content-Type-Options "nosniff"
+Header set X-Frame-Options "DENY"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+
+# ===== Security headers tambahan — CSP & permissions =====
+<IfModule mod_headers.c>
+    # HSTS hanya saat request HTTPS (env APACHE_HSTS dari blok di atas)
+    Header always set Strict-Transport-Security "max-age=31536000" env=APACHE_HSTS
+
+    # CSP frontend (Vue + Tailwind CDN + Bootstrap jsdelivr + font lokal Satoshi).
+    # - 'unsafe-inline' WAJIB untuk inline tailwind.config di index.html:41
+    #   dan <style> yang di-inject Tailwind JIT saat runtime.
+    # - script/style dari cdn.tailwindcss.com & cdn.jsdelivr.net diizinkan.
+    # - font lokal /fonts/ (Satoshi) + data: (embed) -> font-src 'self' data:.
+    # - 5173 = Vite dev server; tidak mengganggu build produksi.
+    # Sesuai isi index.html: Bootstrap CSS+JS via jsdelivr, TIDAK ada Google Fonts.
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://cdn.jsdelivr.net http://localhost:5173 http://127.0.0.1:5173; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' https: http://localhost:5173 http://127.0.0.1:5173; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+    # Batasi fitur browser yang tidak dipakai (kamera bisa untuk avatar upload)
+    Header always set Permissions-Policy "camera=(self), microphone=(), geolocation=(), payment=()"
+</IfModule>

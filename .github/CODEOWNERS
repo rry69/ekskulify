@@ -1,0 +1,13 @@
+# CODEOWNERS (placeholder — ganti dengan username GitHub asli)
+# Sintaks: <pola-path> <owner...>
+# Contoh aktif:
+# /api/ @nama-backend-dev
+# /frontend/ @nama-frontend-dev
+
+# CODEOWNERS — belum ada owner aktif.
+# Ganti @placeholder-owner dengan username GitHub asli, contoh: * @harry-username
+# * @placeholder-owner
+# /api/ @placeholder-owner
+# /frontend/ @placeholder-owner
+# /docs/ @placeholder-owner
+# /sql/ @placeholder-owner

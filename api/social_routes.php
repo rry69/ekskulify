@@ -1,6 +1,6 @@
 <?php
 // Ekskul Social: posts, comments, likes, uploads, notifications, profile, admin file manager
-// YAGNI: polling (no SSE/WS), grouped notifications, member-only guard, local upload
+// Polls: create/get/vote/close (attached to posts), like/comment grouped notifications, member-only guard, local upload
 
 function isMemberOfEkskul($ekskulId, $uid=null){
   if($uid===null){ $u=currentUser(); if(!$u) return false; $uid=$u['id']; }
@@ -81,10 +81,11 @@ function parseMentions($text){
 if(routeMatch('/u/:id',$uri,$pm) && $method==='GET'){
   requireLogin();
   $uid=(int)$pm['id'];
-  $st=pdo()->prepare("SELECT id,nama,email,role,nip,kelas,created_at FROM users WHERE id=? AND deleted_at IS NULL");
+  $st=pdo()->prepare("SELECT id,nama,email,role,nip,kelas,foto,created_at FROM users WHERE id=? AND deleted_at IS NULL");
   $st->execute([$uid]); $u=$st->fetch();
   if(!$u) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'User tidak ada']],404);
   $u['nama']=e($u['nama']); $u['email']=e($u['email']);
+  $u['foto_url']=!empty($u['foto'])?'/api/avatar/'.(int)$u['id']:null;
   // hide email for non-self non-admin
   $cu=currentUser();
   if((int)$cu['id']!==(int)$uid && $cu['role']!=='admin') unset($u['email']);
@@ -110,18 +111,53 @@ if(routeMatch('/ekskul/:id/posts',$uri,$pm) && $method==='GET'){
   $q="SELECT p.*, u.nama author_nama, u.role author_role FROM ekskul_posts p LEFT JOIN users u ON u.id=p.user_id WHERE $whereSql ORDER BY p.created_at DESC LIMIT $limit OFFSET $off";
   $st=pdo()->prepare($q); $st->execute($par); $rows=$st->fetchAll();
   $cu=currentUser();
-  foreach($rows as &$r){
-    $r['isi']=e($r['isi']); $r['judul']=$r['judul']?e($r['judul']):null; $r['author_nama']=e($r['author_nama']);
-    // likes count
-    $lc=pdo()->prepare("SELECT COUNT(*) c FROM ekskul_likes WHERE target_type='post' AND target_id=?"); $lc->execute([$r['id']]); $r['likes']=(int)($lc->fetch()['c']??0);
-    $lk=pdo()->prepare("SELECT 1 FROM ekskul_likes WHERE target_type='post' AND target_id=? AND user_id=?"); $lk->execute([$r['id'],$cu['id']]);
-    $r['is_liked']=(bool)$lk->fetch();
-    $cc=pdo()->prepare("SELECT COUNT(*) c FROM ekskul_comments WHERE post_id=? AND deleted_at IS NULL"); $cc->execute([$r['id']]); $r['comments_count']=(int)($cc->fetch()['c']??0);
-    // uploads
-    $up=pdo()->prepare("SELECT id,original_name,stored_path,mime,size FROM ekskul_uploads WHERE post_id=? AND deleted_at IS NULL"); $up->execute([$r['id']]); $r['uploads']=$up->fetchAll();
-    foreach($r['uploads'] as &$u){ $u['url']='/api/uploads/'.$u['id']; }
-    unset($u);
+  $postIds=array_values(array_unique(array_map('intval',array_column($rows,'id'))));
+  $likeAgg=[]; $ccntMap=[]; $upsByPost=[]; $pollByPost=[]; $optsByPoll=[]; $myVoteMap=[];
+  if($postIds){
+    $ph=implode(',',array_fill(0,count($postIds),'?'));
+    $la=pdo()->prepare("SELECT target_id, COUNT(*) c, SUM(user_id=?) liked FROM ekskul_likes WHERE target_type='post' AND target_id IN ($ph) GROUP BY target_id");
+    $la->execute(array_merge([$cu['id']],$postIds));
+    foreach($la->fetchAll() as $a){ $likeAgg[(int)$a['target_id']]=[(int)$a['c'],(int)$a['liked']>0]; }
+    $cc=pdo()->prepare("SELECT post_id, COUNT(*) c FROM ekskul_comments WHERE post_id IN ($ph) AND deleted_at IS NULL GROUP BY post_id");
+    $cc->execute($postIds);
+    foreach($cc->fetchAll() as $a){ $ccntMap[(int)$a['post_id']]=(int)$a['c']; }
+    $up=pdo()->prepare("SELECT id,post_id,original_name,stored_path,mime,size FROM ekskul_uploads WHERE post_id IN ($ph) AND deleted_at IS NULL");
+    $up->execute($postIds);
+    foreach($up->fetchAll() as $u){ $u['url']='/api/uploads/'.$u['id']; $upPid=(int)$u['post_id']; unset($u['post_id']); $upsByPost[$upPid][]=$u; }
+    try{
+      $ps=pdo()->prepare("SELECT id,post_id,question,closed_at,created_at FROM ekskul_polls WHERE post_id IN ($ph)");
+      $ps->execute($postIds);
+      $pollRows=$ps->fetchAll();
+      foreach($pollRows as $pr){ $pollByPost[(int)$pr['post_id']]=$pr; }
+      $pollIds=array_values(array_unique(array_map('intval',array_column($pollRows,'id'))));
+      if($pollIds){
+        $ph2=implode(',',array_fill(0,count($pollIds),'?'));
+        $os=pdo()->prepare("SELECT po.id,po.poll_id,po.label,po.sort_order,COUNT(pv.option_id) votes,MAX(CASE WHEN pv.user_id=? THEN 1 ELSE 0 END) mine FROM poll_options po LEFT JOIN poll_votes pv ON pv.option_id=po.id WHERE po.poll_id IN ($ph2) GROUP BY po.id ORDER BY po.sort_order ASC, po.id ASC");
+        $os->execute(array_merge([$cu['id']],$pollIds));
+        foreach($os->fetchAll() as $o){ $opid=(int)$o['poll_id']; if((int)$o['mine']===1) $myVoteMap[$opid]=(int)$o['id']; unset($o['mine']); $optsByPoll[$opid][]=$o; }
+      }
+    }catch(Exception $e){ $pollByPost=[]; $optsByPoll=[]; $myVoteMap=[]; }
   }
+  foreach($rows as &$r){
+     $pid=(int)$r['id'];
+     $r['isi']=e($r['isi']); $r['judul']=$r['judul']?e($r['judul']):null; $r['author_nama']=e($r['author_nama']);
+     $r['likes']=$likeAgg[$pid][0]??0;
+     $r['is_liked']=$likeAgg[$pid][1]??false;
+     $r['comments_count']=$ccntMap[$pid]??0;
+     $r['uploads']=$upsByPost[$pid]??[];
+     $poll=$pollByPost[$pid]??null;
+     if($poll){
+       unset($poll['post_id']);
+       $opts=$optsByPoll[(int)$poll['id']]??[];
+       $total=0; foreach($opts as $o){ $total+=(int)$o['votes']; }
+       foreach($opts as &$o){ $o['votes']=(int)$o['votes']; $o['percent']=$total? round($o['votes']/$total*100,1):0; $o['label']=e($o['label']); unset($o['poll_id']); } unset($o);
+       $poll['options']=array_values($opts);
+       $poll['total_votes']=$total;
+       $poll['my_vote']=$myVoteMap[(int)$poll['id']]??null;
+       $poll['question']=e($poll['question']); $poll['is_closed']=!empty($poll['closed_at']);
+       $r['poll']=$poll;
+     } else $r['poll']=null;
+   }
   unset($r);
   $etag='"'.md5(json_encode($rows).$total.$eid.$tipe).'"';
   header('ETag: '.$etag); header('Cache-Control: private, max-age=10');
@@ -211,10 +247,33 @@ if(routeMatch('/ekskul/:id/posts/:pid',$uri,$pm) && $method==='GET'){
   $cu=currentUser(); $lk=pdo()->prepare("SELECT 1 FROM ekskul_likes WHERE target_type='post' AND target_id=? AND user_id=?"); $lk->execute([$pid,$cu['id']]); $r['is_liked']=(bool)$lk->fetch();
   $up=pdo()->prepare("SELECT id,original_name,stored_path,mime,size FROM ekskul_uploads WHERE post_id=? AND deleted_at IS NULL"); $up->execute([$pid]); $r['uploads']=$up->fetchAll();
   foreach($r['uploads'] as &$u){ $u['url']='/api/uploads/'.$u['id']; } unset($u);
-  // comments tree 2 levels
+  // poll attached to this post (if any) — same shape as list
+  try{
+    $ps=pdo()->prepare("SELECT id, user_id, question, closed_at, created_at FROM ekskul_polls WHERE post_id=? LIMIT 1"); $ps->execute([$pid]); $poll=$ps->fetch();
+    if($poll){
+      $opts=pdo()->prepare("SELECT po.id, po.label, po.sort_order, (SELECT COUNT(*) FROM poll_votes pv WHERE pv.option_id=po.id) AS votes FROM poll_options po WHERE po.poll_id=? ORDER BY po.sort_order ASC, po.id ASC"); $opts->execute([$poll['id']]); $poll['options']=$opts->fetchAll();
+      $ptotal=array_sum(array_column($poll['options'],'votes'));
+      foreach($poll['options'] as &$o){ $o['votes']=(int)$o['votes']; $o['percent']=$ptotal? round($o['votes']/$ptotal*100,1):0; $o['label']=e($o['label']); } unset($o);
+      $poll['total_votes']=$ptotal;
+      $my=pdo()->prepare("SELECT option_id FROM poll_votes WHERE poll_id=? AND user_id=?"); $my->execute([$poll['id'],$cu['id']]); $m=$my->fetch(); $poll['my_vote']=$m? (int)$m['option_id']:null;
+      $poll['question']=e($poll['question']); $poll['is_closed']=!empty($poll['closed_at']);
+      $r['poll']=$poll;
+    } else $r['poll']=null;
+  }catch(Exception $e){ $r['poll']=null; }
   $cs=pdo()->prepare("SELECT c.*, u.nama author_nama, u.role author_role FROM ekskul_comments c LEFT JOIN users u ON u.id=c.user_id WHERE c.post_id=? AND c.deleted_at IS NULL ORDER BY c.created_at ASC");
   $cs->execute([$pid]); $comments=$cs->fetchAll();
-  foreach($comments as &$c){ $c['isi']=e($c['isi']); $c['author_nama']=e($c['author_nama']); $lc2=pdo()->prepare("SELECT COUNT(*) c FROM ekskul_likes WHERE target_type='comment' AND target_id=?"); $lc2->execute([$c['id']]); $c['likes']=(int)($lc2->fetch()['c']??0); $lk2=pdo()->prepare("SELECT 1 FROM ekskul_likes WHERE target_type='comment' AND target_id=? AND user_id=?"); $lk2->execute([$c['id'],$cu['id']]); $c['is_liked']=(bool)$lk2->fetch(); $cup=pdo()->prepare("SELECT id,original_name,mime,size FROM ekskul_uploads WHERE comment_id=? AND deleted_at IS NULL"); $cup->execute([$c['id']]); $c['uploads']=$cup->fetchAll(); foreach($c['uploads'] as &$cu2){ $cu2['url']='/api/uploads/'.$cu2['id']; } unset($cu2); }
+  $cIds=array_values(array_unique(array_map('intval',array_column($comments,'id'))));
+  $cLike=[]; $cUps=[];
+  if($cIds){
+    $cph=implode(',',array_fill(0,count($cIds),'?'));
+    $cla=pdo()->prepare("SELECT target_id, COUNT(*) c, SUM(user_id=?) liked FROM ekskul_likes WHERE target_type='comment' AND target_id IN ($cph) GROUP BY target_id");
+    $cla->execute(array_merge([$cu['id']],$cIds));
+    foreach($cla->fetchAll() as $a){ $cLike[(int)$a['target_id']]=[(int)$a['c'],(int)$a['liked']>0]; }
+    $cup=pdo()->prepare("SELECT id,comment_id,original_name,mime,size FROM ekskul_uploads WHERE comment_id IN ($cph) AND deleted_at IS NULL");
+    $cup->execute($cIds);
+    foreach($cup->fetchAll() as $u){ $u['url']='/api/uploads/'.$u['id']; $cp=(int)$u['comment_id']; unset($u['comment_id']); $cUps[$cp][]=$u; }
+  }
+  foreach($comments as &$c){ $cid=(int)$c['id']; $c['isi']=e($c['isi']); $c['author_nama']=e($c['author_nama']); $c['likes']=$cLike[$cid][0]??0; $c['is_liked']=$cLike[$cid][1]??false; $c['uploads']=$cUps[$cid]??[]; }
   unset($c);
   // build tree
   $byId=[]; foreach($comments as $c) $byId[$c['id']]=$c;
@@ -241,25 +300,99 @@ if(routeMatch('/ekskul/:id/posts/:pid',$uri,$pm) && $method==='GET'){
   jsonOut(['success'=>true,'data'=>$r]);
 }
 
-// === POST REPORT ===
+// === POST REPORT === (Opsi B: category + status + handled) ===
 if(routeMatch('/ekskul/:id/posts/:pid/report',$uri,$pm) && $method==='POST'){
   requireLogin(); socialRateLimit('report',10);
   $eid=(int)$pm['id']; $pid=(int)$pm['pid'];
-  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
-  $st=pdo()->prepare("SELECT id FROM ekskul_posts WHERE id=? AND ekskul_id=? AND deleted_at IS NULL"); $st->execute([$pid,$eid]); if(!$st->fetch()) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Post tidak ada']],404);
-  $b=getBody(); $reason=trim($b['reason']??'dilaporkan');
-  if(mb_strlen($reason)>200) $reason=mb_substr($reason,0,200);
+  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota ekskul ini']],403);
+  $st=pdo()->prepare("SELECT id, user_id FROM ekskul_posts WHERE id=? AND ekskul_id=? AND deleted_at IS NULL"); $st->execute([$pid,$eid]); $postRow=$st->fetch(); if(!$postRow) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Post tidak ada']],404);
+  $uidTmp=currentUser()['id']; if((int)$postRow['user_id']===(int)$uidTmp) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Tidak bisa melaporkan postingan sendiri']],403);
+  $b=getBody();
+  $allowedCat=['spam','kasar','hoax','sara','lainnya'];
+  $category=trim(strtolower($b['category']??$b['kategori']??'lainnya'));
+  if(!in_array($category,$allowedCat,true)) $category='lainnya';
+  $reason=trim($b['reason']??$b['alasan']??'');
+  if($reason==='') $reason=$category;
+  if(mb_strlen($reason)>300) $reason=mb_substr($reason,0,300);
+  if(mb_strlen($reason)<3) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Alasan minimal 3 karakter']],422);
   $uid=currentUser()['id'];
-  try{ pdo()->exec("CREATE TABLE IF NOT EXISTS post_reports (id INT AUTO_INCREMENT PRIMARY KEY, post_id INT NOT NULL, ekskul_id INT NOT NULL, reporter_id INT NOT NULL, reason VARCHAR(200) NOT NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_reports_post (post_id), INDEX idx_reports_ekskul (ekskul_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
+  try{ pdo()->exec("CREATE TABLE IF NOT EXISTS post_reports (id INT AUTO_INCREMENT PRIMARY KEY, post_id INT NOT NULL, ekskul_id INT NOT NULL, reporter_id INT NOT NULL, category VARCHAR(20) NOT NULL DEFAULT 'lainnya', reason VARCHAR(300) NOT NULL, status ENUM('pending','dismissed','resolved') NOT NULL DEFAULT 'pending', handled_by INT NULL, handled_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_reports_post (post_id), INDEX idx_reports_ekskul (ekskul_id), INDEX idx_reports_status (status), UNIQUE KEY uq_report_once (post_id, reporter_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
+  // migrate existing table if needed
+  try{
+    $cols=pdo()->query("SHOW COLUMNS FROM post_reports")->fetchAll(PDO::FETCH_COLUMN);
+    // PDO fetch column 0 is Field
+    $fields=array_column(pdo()->query("SHOW COLUMNS FROM post_reports")->fetchAll(),'Field');
+    if(!in_array('category',$fields,true)) pdo()->exec("ALTER TABLE post_reports ADD COLUMN category VARCHAR(20) NOT NULL DEFAULT 'lainnya' AFTER reporter_id");
+    if(!in_array('status',$fields,true)) pdo()->exec("ALTER TABLE post_reports ADD COLUMN status ENUM('pending','dismissed','resolved') NOT NULL DEFAULT 'pending' AFTER reason");
+    if(!in_array('handled_by',$fields,true)) pdo()->exec("ALTER TABLE post_reports ADD COLUMN handled_by INT NULL AFTER status");
+    if(!in_array('handled_at',$fields,true)) pdo()->exec("ALTER TABLE post_reports ADD COLUMN handled_at DATETIME NULL AFTER handled_by");
+    // reason length
+    pdo()->exec("ALTER TABLE post_reports MODIFY reason VARCHAR(300) NOT NULL");
+  }catch(Exception $e){}
   $chk=pdo()->prepare("SELECT 1 FROM post_reports WHERE post_id=? AND reporter_id=?"); $chk->execute([$pid,$uid]); if($chk->fetch()) jsonOut(['success'=>false,'error'=>['code'=>'EXISTS','message'=>'Sudah dilaporkan']],409);
-  pdo()->prepare("INSERT INTO post_reports(post_id,ekskul_id,reporter_id,reason) VALUES (?,?,?,?)")->execute([$pid,$eid,$uid,$reason]);
-  try{ pdo()->prepare("INSERT INTO audit_log(user_id,action,target_type,target_id,detail) VALUES (?,?,?,?,?)")->execute([$uid,'report','post',$pid, json_encode(['ekskul_id'=>$eid,'reason'=>$reason],JSON_UNESCAPED_UNICODE)]); }catch(Exception $e){}
+  pdo()->prepare("INSERT INTO post_reports(post_id,ekskul_id,reporter_id,category,reason,status) VALUES (?,?,?,?,?,'pending')")->execute([$pid,$eid,$uid,$category,$reason]);
+  $rid=pdo()->lastInsertId();
+  try{ pdo()->prepare("INSERT INTO audit_log(user_id,action,target_type,target_id,detail) VALUES (?,?,?,?,?)")->execute([$uid,'report','post',$pid, json_encode(['ekskul_id'=>$eid,'category'=>$category,'reason'=>$reason,'report_id'=>$rid],JSON_UNESCAPED_UNICODE)]); }catch(Exception $e){}
   // notify pembina
   try{
     $pemb=pdo()->prepare("SELECT pembina_id FROM ekskul WHERE id=?"); $pemb->execute([$eid]); $pr=$pemb->fetch();
     if($pr && (int)$pr['pembina_id']!==(int)$uid) createGroupedNotif((int)$pr['pembina_id'],$uid,$eid,$pid,null,'report','report:post:'.$pid);
   }catch(Exception $e){}
-  jsonOut(['success'=>true,'data'=>null]);
+  jsonOut(['success'=>true,'data'=>['id'=>(int)$rid,'category'=>$category]],201);
+}
+
+// === REPORTS LIST GET /ekskul/:id/reports (pembina only) ===
+if(routeMatch('/ekskul/:id/reports',$uri,$pm) && $method==='GET'){
+  requireLogin();
+  $eid=(int)$pm['id'];
+  // only pembina/admin
+  $cu=currentUser();
+  if(!isPembinaOf($eid) && $cu['role']!=='admin') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya pembina']],403);
+  try{ pdo()->exec("CREATE TABLE IF NOT EXISTS post_reports (id INT AUTO_INCREMENT PRIMARY KEY, post_id INT NOT NULL, ekskul_id INT NOT NULL, reporter_id INT NOT NULL, category VARCHAR(20) NOT NULL DEFAULT 'lainnya', reason VARCHAR(300) NOT NULL, status ENUM('pending','dismissed','resolved') NOT NULL DEFAULT 'pending', handled_by INT NULL, handled_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_reports_post (post_id), INDEX idx_reports_ekskul (ekskul_id), INDEX idx_reports_status (status), UNIQUE KEY uq_report_once (post_id, reporter_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"); }catch(Exception $e){}
+  $status=trim($_GET['status']??'pending');
+  if(!in_array($status,['pending','dismissed','resolved','all'],true)) $status='pending';
+  $where=['r.ekskul_id=?']; $par=[$eid];
+  if($status!=='all'){ $where[]='r.status=?'; $par[]=$status; }
+  $whereSql=implode(' AND ',$where);
+  // pending first, grouped by post
+  $q="SELECT r.id report_id, r.post_id, r.category, r.reason, r.status, r.created_at report_at, r.handled_by, r.handled_at, u.nama reporter_nama, u.role reporter_role, p.isi post_isi, p.judul post_judul, p.tipe post_tipe, p.user_id post_author_id, pu.nama post_author_nama, p.created_at post_created_at, p.deleted_at post_deleted_at FROM post_reports r JOIN ekskul_posts p ON p.id=r.post_id LEFT JOIN users u ON u.id=r.reporter_id LEFT JOIN users pu ON pu.id=p.user_id WHERE $whereSql ORDER BY r.created_at DESC LIMIT 100";
+  $st=pdo()->prepare($q); $st->execute($par); $rows=$st->fetchAll();
+  // aggregate count per post
+  $counts=[];
+  foreach($rows as $r){ $pid=$r['post_id']; if(!isset($counts[$pid])) $counts[$pid]=0; $counts[$pid]++; }
+  foreach($rows as &$r){ $r['report_count']=$counts[$r['post_id']]??1; $r['reporter_nama']=e($r['reporter_nama']); $r['post_isi']=e($r['post_isi']); $r['post_judul']=$r['post_judul']?e($r['post_judul']):null; $r['post_author_nama']=e($r['post_author_nama']); }
+  unset($r);
+  // summary
+  $pendingCt=pdo()->prepare("SELECT COUNT(*) c FROM post_reports WHERE ekskul_id=? AND status='pending'"); $pendingCt->execute([$eid]); $pending=(int)($pendingCt->fetch()['c']??0);
+  jsonOut(['success'=>true,'data'=>$rows,'meta'=>['pending'=>$pending]]);
+}
+
+// === REPORT HANDLE POST /ekskul/:id/reports/:rid/handle ===
+if(routeMatch('/ekskul/:id/reports/:rid/handle',$uri,$pm) && $method==='POST'){
+  requireLogin();
+  $eid=(int)$pm['id']; $rid=(int)$pm['rid'];
+  $cu=currentUser();
+  if(!isPembinaOf($eid) && $cu['role']!=='admin') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya pembina']],403);
+  $b=getBody(); $action=trim($b['action']??'');
+  if(!in_array($action,['dismiss','dismiss_post','resolve_delete'],true)) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'action: dismiss | dismiss_post | resolve_delete']],422);
+  $st=pdo()->prepare("SELECT * FROM post_reports WHERE id=? AND ekskul_id=?"); $st->execute([$rid,$eid]); $rep=$st->fetch();
+  if(!$rep) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Laporan tidak ada']],404);
+  $uid=$cu['id'];
+  if($action==='dismiss'){
+    pdo()->prepare("UPDATE post_reports SET status='dismissed', handled_by=?, handled_at=NOW() WHERE id=?")->execute([$uid,$rid]);
+    try{ pdo()->prepare("INSERT INTO audit_log(user_id,action,target_type,target_id,detail) VALUES (?,?,?,?,?)")->execute([$uid,'report_dismiss','post',$rep['post_id'], json_encode(['report_id'=>$rid,'ekskul_id'=>$eid],JSON_UNESCAPED_UNICODE)]); }catch(Exception $e){}
+    jsonOut(['success'=>true,'data'=>['status'=>'dismissed']]);
+  } elseif($action==='dismiss_post'){
+    // dismiss all pending reports for this post
+    pdo()->prepare("UPDATE post_reports SET status='dismissed', handled_by=?, handled_at=NOW() WHERE post_id=? AND ekskul_id=? AND status='pending'")->execute([$uid,$rep['post_id'],$eid]);
+    try{ pdo()->prepare("INSERT INTO audit_log(user_id,action,target_type,target_id,detail) VALUES (?,?,?,?,?)")->execute([$uid,'report_dismiss_post','post',$rep['post_id'], json_encode(['ekskul_id'=>$eid],JSON_UNESCAPED_UNICODE)]); }catch(Exception $e){}
+    jsonOut(['success'=>true,'data'=>['status'=>'dismissed']]);
+  } else { // resolve_delete: hapus post + mark resolved
+    pdo()->prepare("UPDATE ekskul_posts SET deleted_at=NOW() WHERE id=? AND ekskul_id=?")->execute([$rep['post_id'],$eid]);
+    pdo()->prepare("UPDATE post_reports SET status='resolved', handled_by=?, handled_at=NOW() WHERE post_id=? AND ekskul_id=? AND status='pending'")->execute([$uid,$rep['post_id'],$eid]);
+    try{ pdo()->prepare("INSERT INTO audit_log(user_id,action,target_type,target_id,detail) VALUES (?,?,?,?,?)")->execute([$uid,'report_resolve_delete','post',$rep['post_id'], json_encode(['report_id'=>$rid,'ekskul_id'=>$eid],JSON_UNESCAPED_UNICODE)]); }catch(Exception $e){}
+    jsonOut(['success'=>true,'data'=>['status'=>'resolved','post_deleted'=>true]]);
+  }
 }
 
 // === POST DELETE ===
@@ -408,8 +541,7 @@ if(routeMatch('/ekskul/:id/upload',$uri,$pm) && $method==='POST'){
   }
   $saved=[];
   $uid=currentUser()['id'];
-  $baseDir=__DIR__.'/uploads/ekskul_'.$eid;
-  if(!is_dir($baseDir)) @mkdir($baseDir,0775,true);
+  $baseDir=uploadPath('ekskul_'.$eid);
   $blockedExt=['php','phtml','phar','sh','exe','js','html','htm'];
   $allowedExt=['jpg','jpeg','png','webp','gif','pdf','txt','zip','doc','docx'];
   foreach($files as $f){
@@ -455,7 +587,7 @@ if(routeMatch('/uploads/:id',$uri,$pm) && $method==='GET'){
   $st=pdo()->prepare("SELECT * FROM ekskul_uploads WHERE id=? AND deleted_at IS NULL"); $st->execute([$id]); $row=$st->fetch();
   if(!$row) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'File tidak ada']],404);
   if(!canAccessEkskulSocial((int)$row['ekskul_id'])) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota ekskul']],403);
-  $path=__DIR__.'/'.$row['stored_path'];
+  $path=uploadPath($row['stored_path']);
   if(!file_exists($path)) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'File hilang di disk']],404);
   $mime=$row['mime']?: mime_content_type($path) ?: 'application/octet-stream';
   header('Content-Type: '.$mime);
@@ -518,7 +650,7 @@ if($uri==='/admin/uploads/bulk-delete' && $method==='POST'){
   $ph=implode(',',array_fill(0,count($ids),'?'));
   $st=pdo()->prepare("SELECT id,stored_path FROM ekskul_uploads WHERE id IN ($ph) AND deleted_at IS NULL"); $st->execute($ids); $rows=$st->fetchAll();
   foreach($rows as $r){
-    $p=__DIR__.'/'.$r['stored_path'];
+    $p=uploadPath($r['stored_path']);
     if(file_exists($p)) @unlink($p);
   }
   $st2=pdo()->prepare("UPDATE ekskul_uploads SET deleted_at=NOW() WHERE id IN ($ph)"); $st2->execute($ids);
@@ -534,7 +666,140 @@ if(routeMatch('/uploads/:id',$uri,$pm) && $method==='DELETE'){
   $cu=currentUser();
   $isOwner=(int)$row['user_id']===(int)$cu['id'];
   if(!$isOwner && !isPembinaOf((int)$row['ekskul_id']) && $cu['role']!=='admin') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya pemilik/pembina']],403);
-  $p=__DIR__.'/'.$row['stored_path']; if(file_exists($p)) @unlink($p);
+  $p=uploadPath($row['stored_path']); if(file_exists($p)) @unlink($p);
   pdo()->prepare("UPDATE ekskul_uploads SET deleted_at=NOW() WHERE id=?")->execute([$id]);
   jsonOut(['success'=>true,'data'=>null]);
 }
+
+// === UNREAD COUNTS GET /ekskul/:id/unread-counts ===
+if(routeMatch('/ekskul/:id/unread-counts',$uri,$pm) && $method==='GET'){
+  requireLogin();
+  $eid=(int)$pm['id'];
+  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
+  $uid=(int)currentUser()['id'];
+  $tabs=['diskusi','tanya','postingan'];
+  $result=[];
+  foreach($tabs as $t){
+    $st=pdo()->prepare("SELECT last_read_at FROM ekskul_tab_reads WHERE user_id=? AND ekskul_id=? AND tipe=?");
+    $st->execute([$uid,$eid,$t]);
+    $row=$st->fetch();
+    if($row){
+      $ct=pdo()->prepare("SELECT COUNT(*) c FROM ekskul_posts WHERE ekskul_id=? AND tipe=? AND deleted_at IS NULL AND created_at > ?");
+      $ct->execute([$eid,$t,$row['last_read_at']]);
+      $result[$t]=(int)($ct->fetch()['c']??0);
+    } else {
+      $ct=pdo()->prepare("SELECT COUNT(*) c FROM ekskul_posts WHERE ekskul_id=? AND tipe=? AND deleted_at IS NULL");
+      $ct->execute([$eid,$t]);
+      $result[$t]=(int)($ct->fetch()['c']??0);
+    }
+  }
+  $cu=currentUser();
+  $result['is_pembina']=(isPembinaOf($eid) && $cu['role']!=='admin');
+  jsonOut(['success'=>true,'data'=>$result]);
+}
+
+// === MARK TAB READ POST /ekskul/:id/mark-read ===
+if(routeMatch('/ekskul/:id/mark-read',$uri,$pm) && $method==='POST'){
+  requireLogin();
+  $eid=(int)$pm['id'];
+  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
+  $b=getBody();
+  $tipe=trim($b['tipe']??'');
+  if(!in_array($tipe,['diskusi','tanya','postingan'],true)) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'tipe wajib']],422);
+  $uid=(int)currentUser()['id'];
+  $st=pdo()->prepare("INSERT INTO ekskul_tab_reads(user_id,ekskul_id,tipe,last_read_at) VALUES (?,?,?,NOW()) ON DUPLICATE KEY UPDATE last_read_at=NOW()");
+  $st->execute([$uid,$eid,$tipe]);
+  jsonOut(['success'=>true,'data'=>null]);
+}
+
+if(routeMatch('/ekskul/:id/polls',$uri,$pm) && $method==='GET'){
+  requireLogin(); $eid=(int)$pm['id'];
+  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
+  $rows=pdo()->prepare("SELECT ep.*, u.nama author_nama FROM ekskul_polls ep LEFT JOIN users u ON u.id=ep.user_id WHERE ep.ekskul_id=? ORDER BY ep.created_at DESC LIMIT 50"); $rows->execute([$eid]); $polls=$rows->fetchAll();
+  $uidPoll=(int)currentUser()['id'];
+  $pollIds=array_values(array_unique(array_map('intval',array_column($polls,'id'))));
+  $optsByPoll=[]; $myVoteMap=[];
+  if($pollIds){
+    $ph=implode(',',array_fill(0,count($pollIds),'?'));
+    $os=pdo()->prepare("SELECT po.id, po.poll_id, po.label, po.sort_order, COUNT(pv.option_id) AS votes FROM poll_options po LEFT JOIN poll_votes pv ON pv.option_id=po.id WHERE po.poll_id IN ($ph) GROUP BY po.id ORDER BY po.sort_order ASC, po.id ASC"); $os->execute($pollIds);
+    foreach($os->fetchAll() as $o){ $optsByPoll[(int)$o['poll_id']][]=$o; }
+    $my=pdo()->prepare("SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN ($ph) AND user_id=?"); $my->execute(array_merge($pollIds,[$uidPoll]));
+    foreach($my->fetchAll() as $m){ $myVoteMap[(int)$m['poll_id']]=(int)$m['option_id']; }
+  }
+  foreach($polls as &$pl){
+    $opts=$optsByPoll[(int)$pl['id']]??[];
+    foreach($opts as &$o){ unset($o['poll_id']); }
+    unset($o);
+    $pl['options']=array_values($opts);
+    $total=array_sum(array_column($pl['options'],'votes'));
+    foreach($pl['options'] as &$o){ $o['votes']=(int)$o['votes']; $o['percent']=$total? round($o['votes']/$total*100,1):0; } unset($o);
+    $pl['total_votes']=$total;
+    $pl['my_vote']=$myVoteMap[(int)$pl['id']]??null;
+    $pl['question']=e($pl['question']); $pl['author_nama']=e($pl['author_nama']??'');
+  } unset($pl);
+  $etag='"'.md5(json_encode($polls).$eid).'"'; header('ETag: '.$etag); header('Cache-Control: private, max-age=15, stale-while-revalidate=30');
+  if(isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH'])===$etag){ http_response_code(304); exit; }
+  jsonOut(['success'=>true,'data'=>$polls]);
+}
+if(routeMatch('/ekskul/:id/polls',$uri,$pm) && $method==='POST'){
+  requireLogin(); socialRateLimit('poll_create',10); $eid=(int)$pm['id'];
+  if(!canAccessEkskulSocial($eid)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
+  $b=getBody(); $q=trim($b['question']??$b['judul']??''); $optsRaw=$b['options']??$b['choices']??[];
+  if(mb_strlen($q)<5) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Pertanyaan minimal 5 karakter']],422);
+  if(mb_strlen($q)>500) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Pertanyaan maksimal 500']],422);
+  if(!is_array($optsRaw) || count($optsRaw)<2) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Minimal 2 opsi']],422);
+  if(count($optsRaw)>6) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Maksimal 6 opsi']],422);
+  $clean=[]; foreach($optsRaw as $o){ $t=trim((string)$o); if($t==='') continue; if(mb_strlen($t)>100) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Opsi maksimal 100 karakter']],422); $clean[]=$t; }
+  if(count($clean)<2) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Minimal 2 opsi valid']],422);
+  // dedup case-insensitive
+  $low=array_map(fn($x)=>mb_strtolower($x),$clean); if(count($low)!==count(array_unique($low))) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Opsi tidak boleh duplikat']],422);
+  $postId=isset($b['post_id']) ? (int)$b['post_id'] : null;
+  if($postId){ $chk=pdo()->prepare("SELECT 1 FROM ekskul_posts WHERE id=? AND ekskul_id=? AND deleted_at IS NULL"); $chk->execute([$postId,$eid]); if(!$chk->fetch()) $postId=null; }
+  pdo()->prepare("INSERT INTO ekskul_polls(ekskul_id,post_id,user_id,question) VALUES (?,?,?,?)")->execute([$eid,$postId,currentUser()['id'],$q]);
+  $pid=pdo()->lastInsertId();
+  foreach($clean as $i=>$lab){ pdo()->prepare("INSERT INTO poll_options(poll_id,label,sort_order) VALUES (?,?,?)")->execute([$pid,$lab,$i]); }
+  jsonOut(['success'=>true,'data'=>['id'=>(int)$pid]],201);
+}
+if(routeMatch('/polls/:id/vote',$uri,$pm) && $method==='POST'){
+  requireLogin(); socialRateLimit('poll_vote',20); $pollId=(int)$pm['id'];
+  $st=pdo()->prepare("SELECT ekskul_id, closed_at FROM ekskul_polls WHERE id=?"); $st->execute([$pollId]); $poll=$st->fetch();
+  if(!$poll) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Poll tidak ada']],404);
+  if(!empty($poll['closed_at']) && strtotime($poll['closed_at'])<time()) jsonOut(['success'=>false,'error'=>['code'=>'CLOSED','message'=>'Poll sudah ditutup']],410);
+  if(!canAccessEkskulSocial((int)$poll['ekskul_id'])) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya anggota']],403);
+  $cuVote=currentUser(); if(in_array($cuVote['role'], ['pembina','kepsek','admin'], true)) jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya siswa yang boleh memberikan suara']],403);
+  $b=getBody(); $optId=(int)($b['option_id']??$b['optionId']??0);
+  if(!$optId) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'option_id wajib']],422);
+  $chk=pdo()->prepare("SELECT 1 FROM poll_options WHERE id=? AND poll_id=?"); $chk->execute([$optId,$pollId]); if(!$chk->fetch()) jsonOut(['success'=>false,'error'=>['code'=>'VALIDATION','message'=>'Opsi tidak valid untuk poll ini']],422);
+  // one vote per user, LOCKED — no change/revoke (spec: vote tidak bisa dicabut)
+  $cu2=currentUser();
+  $dup=pdo()->prepare("SELECT 1 FROM poll_votes WHERE poll_id=? AND user_id=?"); $dup->execute([$pollId,$cu2['id']]); if($dup->fetch()) jsonOut(['success'=>false,'error'=>['code'=>'ALREADY_VOTED','message'=>'Sudah vote, tidak bisa diubah']],409);
+  try{
+    pdo()->prepare("INSERT INTO poll_votes(poll_id,option_id,user_id) VALUES (?,?,?)")->execute([$pollId,$optId,$cu2['id']]);
+  } catch(Exception $e){
+    // race: unique constraint hit → treat as already voted
+    jsonOut(['success'=>false,'error'=>['code'=>'ALREADY_VOTED','message'=>'Sudah vote, tidak bisa diubah']],409);
+  }
+  // agregat fresh
+  $opts=pdo()->prepare("SELECT po.id, po.label, (SELECT COUNT(*) FROM poll_votes pv WHERE pv.option_id=po.id) AS votes FROM poll_options po WHERE po.poll_id=? ORDER BY po.sort_order ASC"); $opts->execute([$pollId]); $rows=$opts->fetchAll();
+  $total=array_sum(array_column($rows,'votes')); foreach($rows as &$r){ $r['votes']=(int)$r['votes']; $r['percent']=$total? round($r['votes']/$total*100,1):0; } unset($r);
+  jsonOut(['success'=>true,'data'=>['options'=>$rows,'total'=>$total,'my_vote'=>$optId]]);
+}
+if(routeMatch('/polls/:id/close',$uri,$pm) && $method==='POST'){
+  requireLogin(); $pollId=(int)$pm['id'];
+  $st=pdo()->prepare("SELECT ekskul_id, user_id, closed_at FROM ekskul_polls WHERE id=?"); $st->execute([$pollId]); $poll=$st->fetch();
+  if(!$poll) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Poll tidak ada']],404);
+  $cu=currentUser();
+  if((int)$poll['user_id']!==(int)$cu['id'] && !isPembinaOf((int)$poll['ekskul_id']) && $cu['role']!=='admin') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya pemilik/pembina']],403);
+  pdo()->prepare("UPDATE ekskul_polls SET closed_at=NOW() WHERE id=?")->execute([$pollId]);
+  jsonOut(['success'=>true,'data'=>['id'=>$pollId]]);
+}
+if(routeMatch('/polls/:id',$uri,$pm) && $method==='DELETE'){
+  requireLogin(); $pollId=(int)$pm['id'];
+  $st=pdo()->prepare("SELECT ekskul_id, user_id FROM ekskul_polls WHERE id=?"); $st->execute([$pollId]); $poll=$st->fetch();
+  if(!$poll) jsonOut(['success'=>false,'error'=>['code'=>'NOT_FOUND','message'=>'Poll tidak ada']],404);
+  $cu=currentUser();
+  if((int)$poll['user_id']!==(int)$cu['id'] && !isPembinaOf((int)$poll['ekskul_id']) && $cu['role']!=='admin') jsonOut(['success'=>false,'error'=>['code'=>'FORBIDDEN','message'=>'Hanya pemilik/pembina']],403);
+  pdo()->prepare("DELETE FROM ekskul_polls WHERE id=?")->execute([$pollId]);
+  jsonOut(['success'=>true,'data'=>null]);
+}
+

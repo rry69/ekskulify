@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  php-lint:
+    name: php-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: PHP syntax check api/*.php
+        run: |
+          shopt -s nullglob
+          files=(api/*.php)
+          if [ ${#files[@]} -eq 0 ]; then echo "No PHP files in api/"; exit 0; fi
+          for f in "${files[@]}"; do php -l "$f"; done
+      - name: Composer validate
+        run: composer validate --no-check-publish
+
+  php-test:
+    name: php-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo_sqlite, sqlite3
+          coverage: none
+      - name: Install dependencies
+        run: composer install --no-progress --prefer-dist
+      - name: Run PHP tests (phpunit or fallback)
+        run: |
+          if [ -f vendor/bin/phpunit ]; then
+            vendor/bin/phpunit
+          elif [ -f tests/run.php ]; then
+            php tests/run.php
+          else
+            echo "No PHP tests found (vendor/bin/phpunit, tests/run.php), skipping."
+          fi
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Lint (if configured)
+        run: |
+          if [ -f .eslintrc.js ] || [ -f .eslintrc.json ] || [ -f .eslintrc.cjs ] || [ -f eslint.config.js ]; then
+            npm run lint --if-present
+          else
+            echo "No eslint config found, skipping lint."
+          fi
+
+  package:
+    name: package
+    runs-on: ubuntu-latest
+    needs: [php-lint, php-test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Rebuild frontend dist (release copy)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+      - name: Zip backend (exclude vendor/sessions/uploads)
+        run: |
+          zip -r backend.zip api sql .env.example \
+            -x "vendor/*" "api/vendor/*" \
+               "api/sessions/*" "api/uploads/*" "api/logs/*" "api/cache/*" \
+               "*.db" "api/*.db" ".env" "api/.env"
+          unzip -l backend.zip | head -30
+      - name: Zip frontend dist
+        run: |
+          cd frontend/dist
+          zip -r ../../frontend-dist.zip .
+          cd ../..
+          unzip -l frontend-dist.zip | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manual
+          path: |
+            backend.zip
+            frontend-dist.zip
+          if-no-files-found: error

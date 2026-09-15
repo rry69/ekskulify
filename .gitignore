@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build output (incl. paket deploy hosting — regenerate via npm run build)
+dist/
+frontend/dist/
+deploy/
+
+# Assets source yang tidak dipakai langsung (font pack)
+Satoshi_Complete/
+
+# Test data & laporan
+users-2026-09-07.csv
+sql/seed_demo.sql
+sql/seed_assets/
+sql/migration_users_production.sql
+sertifikat.png
+template_import_users.csv
+projects-ekskulify.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# Log & sementara
+*.log
+*.tmp
+.phpunit.cache/
+.phpunit.result.cache
+
+# Backup & debris
+*.bak
+*.bak-*
+*.orig
+
+# Secret & env
+.env
+api/.env
+.app_key
+api/.app_key
+
+# Runtime artifacts
+api/logs/
+api/uploads/
+api/sessions/
+api/cache/
+api/backups/
+
+# Env variants & local DB (jangan ikut versioning)
+.env.local
+.env.*.local
+api/*.db
+*.sqlite
+*.sqlite3
+
+# Debug script (guard via ALLOW_DEBUG_IP + session admin; jangan ikut versioning)
+check_approval.php
+debug_event.ps1
+smoke_*.ps1
+
+# AI tool dirs (settings lokal)
+.claude/
+.commandcode/
+.opencode/
+.codex/
+.gemini/
+.hermes/
+.agents/
+.impeccable/

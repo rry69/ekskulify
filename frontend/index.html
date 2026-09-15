@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Eskulify - Manajemen Ekskul & Event</title>
+<meta name="description" content="Eskulify - Manajemen Ekskul & Event Sekolah" />
+<style>
+ /* Satoshi - single font system for Eskulify (Variable 300-900) */
+ @font-face{
+  font-family:'Satoshi';
+  src: url('/fonts/satoshi/Satoshi-Variable.woff2') format('woff2-variations'),
+     url('/fonts/satoshi/Satoshi-Variable.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+ }
+ @font-face{
+  font-family:'Satoshi';
+  src: url('/fonts/satoshi/Satoshi-VariableItalic.woff2') format('woff2-variations'),
+     url('/fonts/satoshi/Satoshi-VariableItalic.woff2') format('woff2');
+  font-weight: 300 900;
+  font-style: italic;
+  font-display: swap;
+ }
+ /* static fallbacks for older browsers */
+ @font-face{ font-family:'Satoshi'; src: url('/fonts/satoshi/Satoshi-Regular.woff2') format('woff2'); font-weight:400; font-style:normal; font-display:swap; }
+ @font-face{ font-family:'Satoshi'; src: url('/fonts/satoshi/Satoshi-Medium.woff2') format('woff2'); font-weight:500; font-style:normal; font-display:swap; }
+ @font-face{ font-family:'Satoshi'; src: url('/fonts/satoshi/Satoshi-Bold.woff2') format('woff2'); font-weight:700; font-style:normal; font-display:swap; }
+ @font-face{ font-family:'Satoshi'; src: url('/fonts/satoshi/Satoshi-Black.woff2') format('woff2'); font-weight:900; font-style:normal; font-display:swap; }
+ html,body{ font-family:'Satoshi',system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif }
+ .logo-font{ font-family:'Satoshi',system-ui,sans-serif; font-weight:800; letter-spacing:-.02em }
+ .mono{ font-family:'Satoshi',system-ui,sans-serif !important; letter-spacing:.02em }
+</style>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20260908" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=20260908" />
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=20260908" />
+<link rel="shortcut icon" href="/favicon.ico?v=20260908" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20260908" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{fontFamily:{sans:['Satoshi','system-ui','sans-serif'],display:['Satoshi','system-ui','sans-serif'],mono:['Satoshi','system-ui','sans-serif']},colors:{brand:{50:'#e8f5e9',100:'#c8e6c9',600:'#2e7d32',700:'#1a5632',800:'#143d24'},ink:'#0f172a'}}}}</script>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

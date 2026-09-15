@@ -1,0 +1,103 @@
+RewriteEngine On
+
+# ============================================================
+# [ HTTPS redirect + HSTS ] — OPT-IN & DEFAULT MATI
+# .htaccess TIDAK bisa membaca env PHP. Aktivasi manual oleh admin:
+#   1. Pastikan SSL aktif & vhost mendengarkan port 443.
+#   2. Set env Apache di vhost/panel hosting:
+#        SetEnv APP_FORCE_HTTPS 1
+#   Selama env tidak diset, redirect & HSTS DIAM (default aman,
+#   tidak memutus akses pada hosting yang belum punya SSL).
+# ============================================================
+<IfModule mod_rewrite.c>
+    # --- redirect HTTP -> HTTPS --------------------------------------------------
+    # Hanya aktif bila: koneksi HTTP (bukan HTTPS, bukan lewat proxy HTTPS),
+    # APP_FORCE_HTTPS=1, dan sasaran bukan file/URI yang harus tetap HTTP.
+    RewriteCond %{HTTPS} off
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https
+    RewriteCond %{ENV:APP_FORCE_HTTPS} =1
+    # skip subrequest: file upload di /api/uploads/ tetap boleh diakses (anti-loop)
+    RewriteCond %{REQUEST_URI} !^/api/uploads/
+    # skip file statis yang benar-benar ada di disk (js/css/gambar)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+    # --- penanda (flag) HSTS: hanya diset saat request benar-benar HTTPS ---------
+    RewriteCond %{HTTPS} on
+    RewriteRule .* - [E=APACHE_HSTS:1]
+</IfModule>
+# deny direct .php/.env/.db/.user.ini (runtime tuning di api/.user.ini) access — security
+<FilesMatch "^\.env|\.db$|^\.user\.ini$">
+  Require all denied
+</FilesMatch>
+# deny SRE internals (sre/, backups/, logs/) bila path = FILE/DIR nyata di disk —
+# anti-leak config, alert, backup SQL. GUARD -f/-d sengaja: route /api/sre/status
+# & /api/sre/backup adalah URL logis yang diproses index.php (bukan file), jadi
+# blanket deny (`^(sre|backups|logs)`) justru mematikan keduanya di Apache (403
+# sebelum PHP). Dengan guard ini, file .php/.log/.sql tetap 403, route tetap jalan.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^(sre|backups|logs)(/|$) - [F,L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.*)$ index.php [QSA,L]
+# deny cache dir (file-cache fallback api/cache/) — anti-leak jika sys_get_temp_dir() tidak writable
+RewriteRule ^cache(/|$) - [F,L]
+# CORS single-source: PHP (index.php:10) echo origin dinamis + Allow-Credentials.
+# Header Apache dihapus — duplikat Access-Control-Allow-Origin = browser CORS fail.
+# block session files api/sessions/sess_* (rewrite !-f lolos file langsung) — anti-leak
+<FilesMatch "^sess_">
+  Require all denied
+</FilesMatch>
+Header set X-Content-Type-Options "nosniff"
+Header set X-Frame-Options "DENY"
+Header set Referrer-Policy "strict-origin-when-cross-origin"
+
+# ============================================================
+# [ Security headers tambahan — defense-in-depth ]
+# ============================================================
+<IfModule mod_headers.c>
+    # CSP API: endpoint hanya keluarkan JSON (resize di index.php:2438/4052
+    # memang image/png, browser tetap sajikan karena bukan dokumen HTML).
+    # default-src 'none' + frame-ancestors 'none' = tidak ada script/style/form.
+    # X-Frame-Options DENY di atas dipertahankan untuk browser lawas.
+    Header always set Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+
+    # Matikan fitur browser yang tidak dibutuhkan API JSON.
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=()"
+
+    # HSTS dikirim HANYA bila env APACHE_HSTS=1 (request sebelumnya HTTPS).
+    # max-age tanpa includeSubDomains: aman bila ada subdomain tanpa SSL.
+    Header always set Strict-Transport-Security "max-age=31536000" env=APACHE_HSTS
+</IfModule>
+
+# ===== Performance: gzip (Apache 2.4 / LiteSpeed) =====
+# CATATAN: gif/jpeg/png/webp TIDAK dikompres (sudah compressed natively).
+# Resize/PHP closure ada di api/index.php:2438 & 4052 — BARANG INI output PNG,
+# kalau tidak sengaja ke-listed, hasilnya CPU mahal. Sinkronkan daftar di sini.
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css application/javascript application/json application/xml image/svg+xml application/x-httpd-php
+  <IfModule mod_setenvif.c>
+    BrowserMatch ^Mozilla/4 gzip-only-text/html
+    BrowserMatch ^Mozilla/4\.0[678] no-gzip
+    BrowserMatch \bMSIE !no-gzip !gzip-only-text/html
+  </IfModule>
+</IfModule>
+
+# ===== Performance: cache file statis uploads/ =====
+# uploads/* di-serve langsung Apache (file EKSPIS -> lolos rewrite). Hanya tipe
+# statis yang dapat cache; JSON API tanpa ext image/css/js tidak tersentuh.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/jpeg "access plus 1 month"
+  ExpiresByType image/png "access plus 1 month"
+  ExpiresByType image/webp "access plus 1 month"
+  ExpiresByType image/gif "access plus 1 month"
+  ExpiresByType image/x-icon "access plus 1 month"
+  ExpiresByType image/svg+xml "access plus 1 month"
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+  ExpiresByType application/x-javascript "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType application/vnd.ms-fontobject "access plus 1 year"
+</IfModule>

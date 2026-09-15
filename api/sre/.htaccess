@@ -1,0 +1,29 @@
+# ============================================================
+# [ api/sre/ — block akses web TOTAL (defense-in-depth) ]
+# Folder ini berisi SOURCE modul SRE (config, backup, alert, log
+# pipeline). File PHP di sini HANYA dipakai via require inclusion dari
+# index.php — tidak ada alasan browser/HTTP menyentuh direktori ini.
+# Route logis /api/sre/status & /api/sre/backup tetap jalan karena
+# diproses index.php (api/.htaccess guard -f/-d), bukan file di sini.
+# ============================================================
+
+# --- (1) Tolak SEMUA request HTTP ke folder ini -----------------
+Require all denied
+
+# --- (2) Matikan eksekusi PHP di folder ini (bila mod_php) -------
+# php_flag hanya efektif via mod_php/mod_phpN (Apache). Pada hosting
+# PHP-FPM/CGI fallback, deny (1)/(3) tetap menutup akses.
+<IfModule mod_php.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+  php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+  php_flag engine off
+</IfModule>
+
+# --- (3) Jaring pengaman: deny aplikasi apapun yang lolos ---------
+<FilesMatch ".*">
+  Require all denied
+</FilesMatch>

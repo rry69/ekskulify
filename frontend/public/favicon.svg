@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" role="img" aria-label="Ekskul & Event">
+  <rect x="4" y="4" width="64" height="64" rx="18" fill="#2F3E46"/>
+  <rect x="18" y="18" width="8" height="36" rx="4" fill="white"/>
+  <rect x="18" y="18" width="32" height="8" rx="4" fill="white"/>
+  <rect x="18" y="32" width="26" height="8" rx="4" fill="#A7C7E7"/>
+  <rect x="18" y="46" width="32" height="8" rx="4" fill="#5EB87E"/>
+</svg>
